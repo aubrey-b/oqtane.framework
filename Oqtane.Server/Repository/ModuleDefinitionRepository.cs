@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Microsoft.Extensions.Caching.Memory;
+using Oqtane.Extensions;
 using Oqtane.Models;
 using Oqtane.Modules;
 using Oqtane.Shared;
@@ -14,6 +15,7 @@ namespace Oqtane.Repository
         private MasterDBContext _db;
         private readonly IMemoryCache _cache;
         private readonly IPermissionRepository _permissions;
+        private List<ModuleDefinition> _moduleDefinitions; // lazy load
 
         public ModuleDefinitionRepository(MasterDBContext context, IMemoryCache cache, IPermissionRepository permissions)
         {
@@ -36,7 +38,7 @@ namespace Oqtane.Repository
         public void UpdateModuleDefinition(ModuleDefinition moduleDefinition)
         {
             _permissions.UpdatePermissions(moduleDefinition.SiteId, EntityNames.ModuleDefinition, moduleDefinition.ModuleDefinitionId, moduleDefinition.Permissions);
-            _cache.Remove("moduledefinitions");
+            _cache.Remove("moduledefinitions:" + moduleDefinition.SiteId.ToString());
         }
 
         public void DeleteModuleDefinition(int moduleDefinitionId, int siteId)
@@ -45,27 +47,35 @@ namespace Oqtane.Repository
             _permissions.DeletePermissions(siteId, EntityNames.ModuleDefinition, moduleDefinitionId);
             _db.ModuleDefinition.Remove(moduleDefinition);
             _db.SaveChanges();
-            _cache.Remove("moduledefinitions");
         }
 
         public List<ModuleDefinition> LoadModuleDefinitions(int siteId)
         {
-            List<ModuleDefinition> moduleDefinitions;
-
-            // get run-time module definitions 
-            moduleDefinitions = _cache.GetOrCreate("moduledefinitions", entry =>
+            // get module definitions for site
+            List<ModuleDefinition> moduleDefinitions = _cache.GetOrCreate("moduledefinitions:" + siteId.ToString(), entry =>
             {
                 entry.SlidingExpiration = TimeSpan.FromMinutes(30);
-                return LoadModuleDefinitionsFromAssemblies();
+                return LoadSiteModuleDefinitions(siteId);
             });
+            return moduleDefinitions;
+        }
 
-            // get module defintion permissions for site
+        private List<ModuleDefinition> LoadSiteModuleDefinitions(int siteId)
+        {
+            if (_moduleDefinitions == null)
+            {
+                // get module assemblies 
+                _moduleDefinitions = LoadModuleDefinitionsFromAssemblies();
+            }
+            List<ModuleDefinition> moduleDefinitions = _moduleDefinitions;
+
+            // get module definition permissions for site
             List<Permission> permissions = _permissions.GetPermissions(siteId, EntityNames.ModuleDefinition).ToList();
 
             // get module definitions in database
             List<ModuleDefinition> moduledefs = _db.ModuleDefinition.ToList();
 
-            // sync run-time module definitions with database
+            // sync module assemblies with database
             foreach (ModuleDefinition moduledefinition in moduleDefinitions)
             {
                 ModuleDefinition moduledef = moduledefs.Where(item => item.ModuleDefinitionName == moduledefinition.ModuleDefinitionName).FirstOrDefault();
@@ -88,8 +98,8 @@ namespace Oqtane.Repository
                     {
                         moduledefinition.Permissions = _permissions.EncodePermissions(permissions.Where(item => item.EntityId == moduledef.ModuleDefinitionId));
                     }
-                    // remove module definition from list
-                    moduledefs.Remove(moduledef);  
+                    // remove module definition from list as it is already synced
+                    moduledefs.Remove(moduledef);
                 }
                 moduledefinition.ModuleDefinitionId = moduledef.ModuleDefinitionId;
                 moduledefinition.SiteId = siteId;
@@ -104,6 +114,7 @@ namespace Oqtane.Repository
             {
                 _permissions.DeletePermissions(siteId, EntityNames.ModuleDefinition, moduledefinition.ModuleDefinitionId);
                 _db.ModuleDefinition.Remove(moduledefinition); // delete
+                _db.SaveChanges();
             }
 
             return moduleDefinitions;
@@ -166,11 +177,18 @@ namespace Oqtane.Repository
                         moduledefinition.AssemblyName = assembly.FullName.Split(",")[0];
                         if (moduledefinition.Categories == "Admin")
                         {
-                            moduledefinition.Permissions = "[{\"PermissionName\":\"Utilize\",\"Permissions\":\"" + Constants.AdminRole + "\"}]";
+                            moduledefinition.Permissions = new List<Permission>
+                            {
+                                new Permission(PermissionNames.Utilize, Constants.AdminRole, true)
+                            }.EncodePermissions();
                         }
                         else
                         {
-                            moduledefinition.Permissions = "[{\"PermissionName\":\"Utilize\",\"Permissions\":\"" + Constants.AdminRole + ";" + Constants.RegisteredRole + "\"}]";
+                            moduledefinition.Permissions = new List<Permission>
+                            {
+                                new Permission(PermissionNames.Utilize, Constants.AdminRole, true),
+                                new Permission(PermissionNames.Utilize, Constants.RegisteredRole, true)
+                            }.EncodePermissions();
                         }
                         moduledefinitions.Add(moduledefinition);
                         index = moduledefinitions.FindIndex(item => item.ModuleDefinitionName == qualifiedModuleType);
@@ -193,14 +211,5 @@ namespace Oqtane.Repository
             return moduledefinitions;
         }
 
-        private string GetProperty(Dictionary<string, string> properties, string key)
-        {
-            string value = "";
-            if (properties.ContainsKey(key))
-            {
-                value = properties[key];
-            }
-            return value;
-        }
     }
 }

@@ -11,7 +11,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Newtonsoft.Json;
-using Oqtane.Controllers;
 using Oqtane.Extensions;
 using Oqtane.Models;
 using Oqtane.Repository;
@@ -74,7 +73,6 @@ namespace Oqtane.Infrastructure
             }
         }
 
-
         public bool IsInstalled
         {
             get
@@ -110,7 +108,7 @@ namespace Oqtane.Infrastructure
                 }
                 else
                 {
-                    Message = "Database is not avaiable";
+                    Message = "Database is not available";
                 }
             }
             else
@@ -212,8 +210,10 @@ namespace Oqtane.Infrastructure
 
         private static void ModuleMigration(Assembly assembly, string connectionString)
         {
+            
+            Console.WriteLine($"Migrating assembly {assembly.FullName}");
             var dbUpgradeConfig = DeployChanges.To.SqlDatabase(connectionString)
-                .WithScriptsEmbeddedInAssembly(assembly); // scripts must be included as Embedded Resources
+                .WithScriptsEmbeddedInAssembly(assembly, s => !s.ToLower().Contains("uninstall.sql")); // scripts must be included as Embedded Resources
             var dbUpgrade = dbUpgradeConfig.Build();
             if (dbUpgrade.IsUpgradeRequired())
             {
@@ -238,17 +238,19 @@ namespace Oqtane.Infrastructure
                 }
             }
         }
-
+        
         private static void TenantMigration(string connectionString, string dataDirectory)
         {
+            Console.WriteLine("Tenant migration");
             var assemblies = AppDomain.CurrentDomain.GetAssemblies()
-                .Where(item => item.FullName != null && item.FullName.Contains(".Module.")).ToArray();
+                .Where(item => item.FullName != null && item.FullName.ToLower().Contains(".module.")).ToArray();
 
             // get tenants
             using (var db = new InstallationContext(connectionString))
             {
                 foreach (var tenant in db.Tenant.ToList())
                 {
+                    Console.WriteLine($"Migrating tenant {tenant.Name}");
                     connectionString = NormalizeConnectionString(tenant.DBConnectionString, dataDirectory);
                     // upgrade framework
                     var dbUpgradeConfig = DeployChanges.To.SqlDatabase(connectionString)
@@ -365,8 +367,6 @@ namespace Oqtane.Infrastructure
             return value;
         }
         
-        
-
         private static void CreateHostUser(IFolderRepository folderRepository, IUserRoleRepository userRoleRepository, IRoleRepository roleRepository, IUserRepository userRepository, UserManager<IdentityUser> identityUserManager, User user)
         {
             var identityUser = new IdentityUser {UserName = user.Username, Email = user.Email, EmailConfirmed = true};
@@ -423,7 +423,6 @@ namespace Oqtane.Infrastructure
                 return TableExists(db, "SchemaVersions");
             }
         }
-
 
         public static bool TableExists(DbContext context, string tableName)
         {

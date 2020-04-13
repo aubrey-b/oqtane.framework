@@ -25,14 +25,15 @@ namespace Oqtane
     public class Startup
     {
         public IConfigurationRoot Configuration { get; }
-
+        private string _webRoot;
+        
         public Startup(IWebHostEnvironment env)
         {
             var builder = new ConfigurationBuilder()
                 .SetBasePath(env.ContentRootPath)
                 .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
             Configuration = builder.Build();
-
+            _webRoot = env.WebRootPath;              
             AppDomain.CurrentDomain.SetData("DataDirectory", Path.Combine(env.ContentRootPath, "Data"));
         }
 
@@ -153,7 +154,10 @@ namespace Oqtane
             services.AddSingleton<IInstallationManager, InstallationManager>();
             services.AddSingleton<ISyncManager, SyncManager>();
             services.AddSingleton<DatabaseManager>();
-            
+
+            // install any modules or themes ( this needs to occur BEFORE the assemblies are loaded into the app domain )
+            InstallationManager.UnpackPackages("Modules,Themes", _webRoot);
+
             // register transient scoped core services
             services.AddTransient<IModuleDefinitionRepository, ModuleDefinitionRepository>();
             services.AddTransient<IThemeRepository, ThemeRepository>();
@@ -181,12 +185,13 @@ namespace Oqtane
             services.AddTransient<ISiteTemplateRepository, SiteTemplateRepository>();
             services.AddTransient<ISqlRepository, SqlRepository>();
 
+            // load the external assemblies into the app domain
             services.AddOqtaneModules();
             services.AddOqtaneThemes();
             services.AddOqtaneSiteTemplates();
 
             services.AddMvc()
-                .AddOqtaneApplicationParts()
+                .AddOqtaneApplicationParts() // register any Controllers from custom modules
                 .AddNewtonsoftJson();
 
             services.AddOqtaneServices();
@@ -201,7 +206,7 @@ namespace Oqtane
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
-        public void Configure(IApplicationBuilder app, IWebHostEnvironment env, IInstallationManager installationManager)
+        public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
         {
             if (env.IsDevelopment())
             {
@@ -213,9 +218,6 @@ namespace Oqtane
                 // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
                 app.UseHsts();
             }
-
-            // install any modules or themes
-            installationManager.InstallPackages("Modules,Themes", false);
 
             app.UseHttpsRedirection();
             app.UseStaticFiles();

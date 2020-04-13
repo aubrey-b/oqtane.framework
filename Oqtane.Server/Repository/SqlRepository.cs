@@ -8,6 +8,15 @@ namespace Oqtane.Repository
     public class SqlRepository : ISqlRepository
     {
 
+        public void ExecuteScript(Tenant tenant, string script)
+        {
+            // execute script in curent tenant
+            foreach (string query in script.Split("GO", StringSplitOptions.RemoveEmptyEntries))
+            {
+                ExecuteNonQuery(tenant, query);
+            }
+        }
+
         public int ExecuteNonQuery(Tenant tenant, string query)
         {
             SqlConnection conn = new SqlConnection(FormatConnectionString(tenant.DBConnectionString));
@@ -15,7 +24,15 @@ namespace Oqtane.Repository
             using (conn)
             {
                 PrepareCommand(conn, cmd, query);
-                int val = cmd.ExecuteNonQuery();
+                int val = -1;
+                try
+                {
+                    val = cmd.ExecuteNonQuery();
+                }
+                catch
+                {
+                    // an error occurred executing the query
+                }
                 return val;
             }
         }
